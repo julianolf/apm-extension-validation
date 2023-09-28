@@ -1,0 +1,76 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  SAM application for Elastic APM Lambda extension validation
+
+Parameters:
+  SecurityGroups:
+    Type: CommaDelimitedList
+    Description: List of security group IDs for a specific VPN (eg. sg-1,sg-2)
+    Default: ''
+  Subnets:
+    Type: CommaDelimitedList
+    Description: List of subnet IDs for a specific VPN (eg. subnet-1,subnet-2)
+    Default: ''
+  ElasticAPMUrl:
+    Type: String
+    Description: Elastic APM URL
+  ElasticAPMSecretToken:
+    Type: String
+    Description: Elastic APM secret token
+
+Globals:
+  Function:
+    Runtime: python3.9
+    Architectures:
+      - x86_64
+    Timeout: 3
+    Layers:
+      - arn:aws:lambda:us-east-1:267093732750:layer:elastic-apm-python-ver-6-18-0:1
+      -
+        Fn::Sub: "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:layer:apm-lambda-extension:3" # Custom extension build
+    # Comment or delete VPC configuration if you don't want to specify one explicitly
+    VpcConfig:
+      SecurityGroupIds:
+        Ref: SecurityGroups
+      SubnetIds:
+        Ref: Subnets
+    Environment:
+      Variables:
+        LOG_LEVEL: DEBUG
+        AWS_LAMBDA_EXEC_WRAPPER: /opt/python/bin/elasticapm-lambda
+        ELASTIC_APM_SERVICE_NAME: apm-extension-validation
+        ELASTIC_APM_ENVIRONMENT: dev
+        ELASTIC_APM_SEND_STRATEGY: background
+        ELASTIC_APM_LOG_LEVEL: debug
+        ELASTIC_APM_LAMBDA_APM_SERVER:
+          Ref: ElasticAPMUrl
+        ELASTIC_APM_SECRET_TOKEN:
+          Ref: ElasticAPMSecretToken
+
+Resources:
+  MessagesQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: apm-extension-validation-queue
+      VisibilityTimeout: 5
+
+  QueueConsumerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: apm-extension-validation-function
+      CodeUri: src/
+      Handler: app.handler
+      Events:
+        SQSEvent:
+          Type: SQS
+          Properties:
+            Queue:
+              Fn::GetAtt: MessagesQueue.Arn
+            BatchSize: 1
+
+Outputs:
+  QueueURL:
+    Description: "SQS Queue URL"
+    Value:
+      Ref: MessagesQueue
